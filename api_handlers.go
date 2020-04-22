@@ -58,9 +58,49 @@ func (srv *MyApi) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
 	case "/user/create":
 		srv.handlerCreate(w, r)
+	case "/user/profile":
+		srv.handlerProfile(w, r)
 	default:
 		w.WriteHeader(http.StatusNotFound)
 		w.Write(unknownMethodResponse)
+	}
+}
+
+func (srv *MyApi) handlerProfile(w http.ResponseWriter, r *http.Request) {
+	login := r.FormValue("login")
+	if login == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write(emptyLoginResponse)
+	} else {
+		params := ProfileParams{
+			Login: login,
+		}
+		ctx := r.Context()
+		newUser, err := srv.Profile(ctx, params)
+		// проверить на специфичную ошибку
+		if err != nil {
+			if reflect.TypeOf(err).String() != "main.ApiError" {
+				w.WriteHeader(http.StatusInternalServerError)
+				errJson, _ := json.Marshal(SR{
+					"error": err.Error(),
+				})
+				w.Write(errJson)
+			} else {
+				errAPI := err.(ApiError)
+				w.WriteHeader(errAPI.HTTPStatus)
+				errJson, _ := json.Marshal(SR{
+					"error": errAPI.Err.Error(),
+				})
+				w.Write(errJson)
+			}
+		} else {
+			newUserJson, _ := json.Marshal(SR{
+				"error":    "",
+				"response": newUser,
+			})
+			w.WriteHeader(http.StatusOK)
+			w.Write(newUserJson)
+		}
 	}
 }
 
@@ -71,7 +111,7 @@ func (srv *MyApi) handlerCreate(w http.ResponseWriter, r *http.Request) {
 	if status == "" {
 		status = "user"
 	}
-	userName := r.FormValue("user_name")
+	userName := r.FormValue("full_name")
 
 	if r.Method != "POST" {
 		w.WriteHeader(http.StatusNotAcceptable)
@@ -94,7 +134,7 @@ func (srv *MyApi) handlerCreate(w http.ResponseWriter, r *http.Request) {
 	} else if int_age > 128 {
 		w.WriteHeader(http.StatusBadRequest)
 		w.Write(maxAgeResponse)
-	}  else if !contains([]string{"user", "moderator", "admin"}, status) {
+	} else if !contains([]string{"user", "moderator", "admin"}, status) {
 		w.WriteHeader(http.StatusBadRequest)
 		w.Write(enumStatusResponse)
 	} else {
@@ -124,8 +164,8 @@ func (srv *MyApi) handlerCreate(w http.ResponseWriter, r *http.Request) {
 			}
 		} else {
 			newUserJson, _ := json.Marshal(SR{
-				"error": "",
-				"response":newUser,
+				"error":    "",
+				"response": newUser,
 			})
 			w.WriteHeader(http.StatusOK)
 			w.Write(newUserJson)
