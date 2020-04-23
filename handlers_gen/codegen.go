@@ -7,6 +7,7 @@ import (
 	"go/token"
 	"log"
 	"os"
+	"strings"
 )
 
 func main() {
@@ -33,7 +34,17 @@ func main() {
 		}
 		if funcDecl.Doc != nil {
 			for _, docString := range funcDecl.Doc.List {
-				fmt.Println(docString.Text)
+				if !strings.HasPrefix(docString.Text, "// apigen:api ") {
+					continue
+				}
+				for _, funcParam := range funcDecl.Type.Params.List {
+					if funcParam.Names[0].Name != "in" {
+						continue
+					}
+					for _, structField := range funcParam.Type.(*ast.Ident).Obj.Decl.(*ast.TypeSpec).Type.(*ast.StructType).Fields.List {
+						fmt.Println(structField)
+					}
+				}
 			}
 		}
 	}
