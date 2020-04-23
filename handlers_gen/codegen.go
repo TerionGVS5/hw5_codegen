@@ -52,6 +52,7 @@ func main() {
 				if !strings.HasPrefix(docString.Text, "// apigen:api ") {
 					continue
 				}
+				apiName := funcDecl.Recv.List[0].Type.(*ast.StarExpr).X
 				var currApiGen ApiGen
 				// add common error response if need
 				json.Unmarshal([]byte(strings.Replace(docString.Text, "// apigen:api ", "", 1)), &currApiGen)
@@ -62,7 +63,7 @@ func main() {
 					})`)
 					fmt.Fprintln(out) // empty line
 				}
-				if !addedUnauthorizedResponse && currApiGen.Auth == true {
+				if !addedUnauthorizedResponse && currApiGen.Auth {
 					addedUnauthorizedResponse = true
 					fmt.Fprintln(out, `var unauthorizedResponse, _ = json.Marshal(map[string]string{
 						"error": "unauthorized",
@@ -70,6 +71,25 @@ func main() {
 					fmt.Fprintln(out) // empty line
 				}
 				// here fill handler
+				// fill first line
+				fmt.Fprintln(out, fmt.Sprintf(`func (srv *%[1]s) handler%[2]s(w http.ResponseWriter, r *http.Request) {`,
+					apiName, funcDecl.Name))
+				if currApiGen.Auth {
+					fmt.Fprintln(out, `if r.Header.Get("X-Auth") != "100500" {
+						w.WriteHeader(http.StatusForbidden)
+						w.Write(unauthorizedResponse)
+						return
+					}`)
+					fmt.Fprintln(out) // empty line
+				}
+				if currApiGen.Method != "" {
+					fmt.Fprintln(out, fmt.Sprintf(`if r.Method != "%s" {
+						w.WriteHeader(http.StatusNotAcceptable)
+						w.Write(badMethodResponse)
+						return
+					}`, currApiGen.Method))
+					fmt.Fprintln(out) // empty line
+				}
 				for _, funcParam := range funcDecl.Type.Params.List {
 					if funcParam.Names[0].Name != "in" {
 						continue
