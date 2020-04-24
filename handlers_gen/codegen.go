@@ -29,13 +29,14 @@ func main() {
 
 	// re here
 	reParamName := regexp.MustCompile(`paramname=(?P<paramname>\w+)`)
+	reParamDefault := regexp.MustCompile(`default=(?P<default>\w+)`)
 
 	fmt.Fprintln(out, `package `+node.Name.Name)
 	fmt.Fprintln(out) // empty line
 	fmt.Fprintln(out, `import "encoding/json"`)
-	fmt.Fprintln(out, `import _ "net/http"`)
+	fmt.Fprintln(out, `import "net/http"`)
 	fmt.Fprintln(out, `import _ "reflect"`)
-	fmt.Fprintln(out, `import _ "strconv"`)
+	fmt.Fprintln(out, `import "strconv"`)
 	fmt.Fprintln(out) // empty line
 
 	// fill common error responses
@@ -105,9 +106,33 @@ func main() {
 						if len(paramNames) > 0 {
 							fieldName = paramNames[1]
 						} else {
-							fieldName = structField.Names[0].Name
+							fieldName = strings.ToLower(structField.Names[0].Name)
 						}
-						fmt.Println(fieldName)
+						if strings.Contains(structField.Tag.Value, "required") {
+							fmt.Fprintln(out, fmt.Sprintf(`if r.FormValue("%[1]s") == "" {
+								w.WriteHeader(http.StatusBadRequest)
+								w.Write(%[1]sEmpty)
+								return
+							}`, fieldName))
+							// todo внести данные в словарь для формирования респонсов
+						}
+						if structField.Type.(*ast.Ident).Name == "string" {
+							fmt.Fprintln(out, fmt.Sprintf(`%[1]sParam := r.FormValue("%[1]s")`, fieldName))
+						} else {
+							fmt.Fprintln(out, fmt.Sprintf(`%[1]sParam, %[1]sParamErr := strconv.ParseInt(r.FormValue("%[1]s"), 10, 64)`, fieldName))
+						}
+						paramDefaults := reParamDefault.FindStringSubmatch(structField.Tag.Value)
+						if len(paramDefaults) > 0 {
+							if structField.Type.(*ast.Ident).Name == "string" {
+								fmt.Fprintln(out, fmt.Sprintf(`if %[1]sParam == "" {
+									%[1]sParam = "%[2]s"
+								}`, fieldName, paramDefaults[1]))
+							} else {
+								fmt.Fprintln(out, fmt.Sprintf(`if %[1]sParam == "" {
+									%[1]sParam = %[2]s
+								}`, fieldName, paramDefaults[1]))
+							}
+						}
 					}
 				}
 			}
