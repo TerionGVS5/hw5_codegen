@@ -32,12 +32,13 @@ func main() {
 	reParamDefault := regexp.MustCompile(`default=(?P<default>\w+)`)
 	reParamMin := regexp.MustCompile(`min=(?P<min>\w+)`)
 	reParamMax := regexp.MustCompile(`max=(?P<max>\w+)`)
+	reEnum := regexp.MustCompile(`enum=(?P<enum>[\w|]+)`)
 
 	fmt.Fprintln(out, `package `+node.Name.Name)
 	fmt.Fprintln(out) // empty line
 	fmt.Fprintln(out, `import "encoding/json"`)
 	fmt.Fprintln(out, `import "net/http"`)
-	fmt.Fprintln(out, `import _ "reflect"`)
+	fmt.Fprintln(out, `import "reflect"`)
 	fmt.Fprintln(out, `import "strconv"`)
 	fmt.Fprintln(out) // empty line
 
@@ -45,6 +46,16 @@ func main() {
 	fmt.Fprintln(out, `var unknownMethodResponse, _ = json.Marshal(map[string]string{
 	"error": "unknown method",
 	})`)
+	fmt.Fprintln(out) // empty line
+	fmt.Fprintln(out, `func contains(arr []string, str string) bool {
+	for _, a := range arr {
+		if a == str {
+			return true
+		}
+	}
+	return false
+	}`)
+	fmt.Fprintln(out, `type SR map[string]interface{}`)
 	fmt.Fprintln(out) // empty line
 	addedBadMethodResponse := false
 	addedUnauthorizedResponse := false
@@ -101,8 +112,8 @@ func main() {
 					if funcParam.Names[0].Name != "in" {
 						continue
 					}
+					var paramNamesRelatedRequestNames = make(map[string]string)
 					for _, structField := range funcParam.Type.(*ast.Ident).Obj.Decl.(*ast.TypeSpec).Type.(*ast.StructType).Fields.List {
-						//fmt.Println(structField.Tag.Value)
 						var fieldName string
 						paramNames := reParamName.FindStringSubmatch(structField.Tag.Value)
 						if len(paramNames) > 0 {
@@ -110,18 +121,26 @@ func main() {
 						} else {
 							fieldName = strings.ToLower(structField.Names[0].Name)
 						}
+						paramNamesRelatedRequestNames[structField.Names[0].Name] = fmt.Sprintf(`%sParam`, fieldName)
 						if strings.Contains(structField.Tag.Value, "required") {
 							fmt.Fprintln(out, fmt.Sprintf(`if r.FormValue("%[1]s") == "" {
 								w.WriteHeader(http.StatusBadRequest)
-								w.Write(%[1]sEmpty)
+								w.Write(%[1]sEmptyResponse%[2]s)
 								return
-							}`, fieldName))
+							}`, fieldName, apiName))
 							// todo внести данные в словарь для формирования респонсов
 						}
 						if structField.Type.(*ast.Ident).Name == "string" {
 							fmt.Fprintln(out, fmt.Sprintf(`%[1]sParam := r.FormValue("%[1]s")`, fieldName))
 						} else {
-							fmt.Fprintln(out, fmt.Sprintf(`%[1]sParam, %[1]sParamErr := strconv.ParseInt(r.FormValue("%[1]s"), 10, 64)`, fieldName))
+							fmt.Fprintln(out, fmt.Sprintf(`%[1]sParam64, %[1]sParamErr := strconv.ParseInt(r.FormValue("%[1]s"), 10, 64)`, fieldName))
+							fmt.Fprintln(out, fmt.Sprintf(`if %[1]sParamErr != nil {
+								w.WriteHeader(http.StatusBadRequest)
+								w.Write(int%[1]sResponse%[2]s)
+								return
+							}`, fieldName, apiName))
+							fmt.Fprintln(out, fmt.Sprintf(`%[1]sParam := int(%[1]sParam64)`, fieldName))
+							// todo внести данные в словарь для формирования респонсов
 						}
 						paramDefaults := reParamDefault.FindStringSubmatch(structField.Tag.Value)
 						if len(paramDefaults) > 0 {
@@ -138,36 +157,81 @@ func main() {
 						paramMins := reParamMin.FindStringSubmatch(structField.Tag.Value)
 						if len(paramMins) > 0 {
 							if structField.Type.(*ast.Ident).Name == "string" {
-								fmt.Fprintln(out, fmt.Sprintf(`if len([]rune(%[1]s)) < %[2]s {
+								fmt.Fprintln(out, fmt.Sprintf(`if len([]rune(%[1]sParam)) < %[2]s {
 									w.WriteHeader(http.StatusBadRequest)
-									w.Write(min%[1]sResponse)
+									w.Write(min%[1]sResponse%[3]s)
 									return
-								}`, fieldName, paramMins[1]))
+								}`, fieldName, paramMins[1], apiName))
+								// todo внести данные в словарь для формирования респонсов
 							} else {
-								fmt.Fprintln(out, fmt.Sprintf(`if %[1]s < %[2]s {
+								fmt.Fprintln(out, fmt.Sprintf(`if %[1]sParam < %[2]s {
 									w.WriteHeader(http.StatusBadRequest)
-									w.Write(min%[1]sResponse)
+									w.Write(min%[1]sResponse%[3]s)
 									return
-								}`, fieldName, paramMins[1]))
+								}`, fieldName, paramMins[1], apiName))
+								// todo внести данные в словарь для формирования респонсов
 							}
 						}
 						paramMaxs := reParamMax.FindStringSubmatch(structField.Tag.Value)
 						if len(paramMaxs) > 0 {
 							if structField.Type.(*ast.Ident).Name == "string" {
-								fmt.Fprintln(out, fmt.Sprintf(`if len([]rune(%[1]s)) > %[2]s {
+								fmt.Fprintln(out, fmt.Sprintf(`if len([]rune(%[1]sParam)) > %[2]s {
 									w.WriteHeader(http.StatusBadRequest)
-									w.Write(max%[1]sResponse)
+									w.Write(max%[1]sResponse%[3]s)
 									return
-								}`, fieldName, paramMaxs[1]))
+								}`, fieldName, paramMaxs[1], apiName))
+								// todo внести данные в словарь для формирования респонсов
 							} else {
-								fmt.Fprintln(out, fmt.Sprintf(`if %[1]s > %[2]s {
+								fmt.Fprintln(out, fmt.Sprintf(`if %[1]sParam > %[2]s {
 									w.WriteHeader(http.StatusBadRequest)
-									w.Write(max%[1]sResponse)
+									w.Write(max%[1]sResponse%[3]s)
 									return
-								}`, fieldName, paramMaxs[1]))
+								}`, fieldName, paramMaxs[1], apiName))
+								// todo внести данные в словарь для формирования респонсов
 							}
 						}
+						paramEnums := reEnum.FindStringSubmatch(structField.Tag.Value)
+						if len(paramEnums) > 0 {
+							fmt.Fprintln(out, fmt.Sprintf(`if !contains(%#[1]v, %[2]sParam) {
+									w.WriteHeader(http.StatusBadRequest)
+									w.Write(%[2]sStatusResponse%[3]s)
+									return
+							}`, strings.Split(paramEnums[1], "|"), fieldName, apiName))
+							// todo внести данные в словарь для формирования респонсов
+						}
 					}
+					fmt.Fprintln(out, `ctx := r.Context()`)
+					fmt.Fprintln(out, fmt.Sprintf(`params := %s{`, funcParam.Type.(*ast.Ident).Name))
+					for key, element := range paramNamesRelatedRequestNames {
+						fmt.Fprintln(out, fmt.Sprintf(`%[1]s: %[2]s,`, key, element))
+					}
+					fmt.Fprintln(out, `}`)
+					fmt.Fprintln(out, `newObj, err := srv.Create(ctx, params)
+					if err != nil {
+						if reflect.TypeOf(err).String() != "main.ApiError" {
+							w.WriteHeader(http.StatusInternalServerError)
+							errJson, _ := json.Marshal(SR{
+								"error": err.Error(),
+							})
+							w.Write(errJson)
+						} else {
+							errAPI := err.(ApiError)
+							w.WriteHeader(errAPI.HTTPStatus)
+							errJson, _ := json.Marshal(SR{
+								"error": errAPI.Err.Error(),
+							})
+							w.Write(errJson)
+						}
+					} else {
+						newObjJson, _ := json.Marshal(SR{
+							"error":    "",
+							"response": newObj,
+						})
+						w.WriteHeader(http.StatusOK)
+						w.Write(newObjJson)
+					}`)
+					fmt.Fprintln(out, `}`)
+
 				}
 			}
 		}
