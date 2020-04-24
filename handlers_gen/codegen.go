@@ -30,6 +30,8 @@ func main() {
 	// re here
 	reParamName := regexp.MustCompile(`paramname=(?P<paramname>\w+)`)
 	reParamDefault := regexp.MustCompile(`default=(?P<default>\w+)`)
+	reParamMin := regexp.MustCompile(`min=(?P<min>\w+)`)
+	reParamMax := regexp.MustCompile(`max=(?P<max>\w+)`)
 
 	fmt.Fprintln(out, `package `+node.Name.Name)
 	fmt.Fprintln(out) // empty line
@@ -131,6 +133,38 @@ func main() {
 								fmt.Fprintln(out, fmt.Sprintf(`if %[1]sParam == "" {
 									%[1]sParam = %[2]s
 								}`, fieldName, paramDefaults[1]))
+							}
+						}
+						paramMins := reParamMin.FindStringSubmatch(structField.Tag.Value)
+						if len(paramMins) > 0 {
+							if structField.Type.(*ast.Ident).Name == "string" {
+								fmt.Fprintln(out, fmt.Sprintf(`if len([]rune(%[1]s)) < %[2]s {
+									w.WriteHeader(http.StatusBadRequest)
+									w.Write(min%[1]sResponse)
+									return
+								}`, fieldName, paramMins[1]))
+							} else {
+								fmt.Fprintln(out, fmt.Sprintf(`if %[1]s < %[2]s {
+									w.WriteHeader(http.StatusBadRequest)
+									w.Write(min%[1]sResponse)
+									return
+								}`, fieldName, paramMins[1]))
+							}
+						}
+						paramMaxs := reParamMax.FindStringSubmatch(structField.Tag.Value)
+						if len(paramMaxs) > 0 {
+							if structField.Type.(*ast.Ident).Name == "string" {
+								fmt.Fprintln(out, fmt.Sprintf(`if len([]rune(%[1]s)) > %[2]s {
+									w.WriteHeader(http.StatusBadRequest)
+									w.Write(max%[1]sResponse)
+									return
+								}`, fieldName, paramMaxs[1]))
+							} else {
+								fmt.Fprintln(out, fmt.Sprintf(`if %[1]s > %[2]s {
+									w.WriteHeader(http.StatusBadRequest)
+									w.Write(max%[1]sResponse)
+									return
+								}`, fieldName, paramMaxs[1]))
 							}
 						}
 					}
