@@ -8,6 +8,7 @@ import (
 	"go/token"
 	"log"
 	"os"
+	"regexp"
 	"strings"
 )
 
@@ -25,6 +26,9 @@ func main() {
 	}
 	out, _ := os.Create(os.Args[2])
 	defer out.Close()
+
+	// re here
+	reParamName := regexp.MustCompile(`paramname=(?P<paramname>\w+)`)
 
 	fmt.Fprintln(out, `package `+node.Name.Name)
 	fmt.Fprintln(out) // empty line
@@ -95,7 +99,15 @@ func main() {
 						continue
 					}
 					for _, structField := range funcParam.Type.(*ast.Ident).Obj.Decl.(*ast.TypeSpec).Type.(*ast.StructType).Fields.List {
-						fmt.Println(structField)
+						//fmt.Println(structField.Tag.Value)
+						var fieldName string
+						paramNames := reParamName.FindStringSubmatch(structField.Tag.Value)
+						if len(paramNames) > 0 {
+							fieldName = paramNames[1]
+						} else {
+							fieldName = structField.Names[0].Name
+						}
+						fmt.Println(fieldName)
 					}
 				}
 			}
