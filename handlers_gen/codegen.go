@@ -18,6 +18,11 @@ type ApiGen struct {
 	Method string `json:"method"`
 }
 
+type CaseHTTPInfo struct {
+	Url     string
+	Handler string
+}
+
 func main() {
 	fset := token.NewFileSet()
 	node, err := parser.ParseFile(fset, os.Args[1], nil, parser.ParseComments)
@@ -60,6 +65,9 @@ func main() {
 	addedBadMethodResponse := false
 	addedUnauthorizedResponse := false
 
+	var responseNamesRelatedError = make(map[string]string)
+	var serveHTTPObjects = make(map[string][]CaseHTTPInfo)
+
 	for _, decl := range node.Decls {
 		funcDecl, ok := decl.(*ast.FuncDecl)
 		if !ok {
@@ -72,8 +80,13 @@ func main() {
 				}
 				apiName := funcDecl.Recv.List[0].Type.(*ast.StarExpr).X
 				var currApiGen ApiGen
+
 				// add common error response if need
 				json.Unmarshal([]byte(strings.Replace(docString.Text, "// apigen:api ", "", 1)), &currApiGen)
+				serveHTTPObjects[fmt.Sprintf(`%s`, apiName)] = append(serveHTTPObjects[fmt.Sprintf(`%s`, apiName)], CaseHTTPInfo{
+					Url:     currApiGen.Url,
+					Handler: fmt.Sprintf(`handler%s`, funcDecl.Name),
+				})
 				if !addedBadMethodResponse && currApiGen.Method != "" {
 					addedBadMethodResponse = true
 					fmt.Fprintln(out, `var badMethodResponse, _ = json.Marshal(map[string]string{
@@ -128,7 +141,7 @@ func main() {
 								w.Write(%[1]sEmptyResponse%[2]s)
 								return
 							}`, fieldName, apiName))
-							// todo внести данные в словарь для формирования респонсов
+							responseNamesRelatedError[fmt.Sprintf(`%[1]sEmptyResponse%[2]s`, fieldName, apiName)] = fmt.Sprintf(`"error": "%s must me not empty",`, fieldName)
 						}
 						if structField.Type.(*ast.Ident).Name == "string" {
 							fmt.Fprintln(out, fmt.Sprintf(`%[1]sParam := r.FormValue("%[1]s")`, fieldName))
@@ -140,7 +153,7 @@ func main() {
 								return
 							}`, fieldName, apiName))
 							fmt.Fprintln(out, fmt.Sprintf(`%[1]sParam := int(%[1]sParam64)`, fieldName))
-							// todo внести данные в словарь для формирования респонсов
+							responseNamesRelatedError[fmt.Sprintf(`int%[1]sResponse%[2]s`, fieldName, apiName)] = fmt.Sprintf(`"error": "%s must be int",`, fieldName)
 						}
 						paramDefaults := reParamDefault.FindStringSubmatch(structField.Tag.Value)
 						if len(paramDefaults) > 0 {
@@ -162,14 +175,14 @@ func main() {
 									w.Write(min%[1]sResponse%[3]s)
 									return
 								}`, fieldName, paramMins[1], apiName))
-								// todo внести данные в словарь для формирования респонсов
+								responseNamesRelatedError[fmt.Sprintf(`min%[1]sResponse%[2]s`, fieldName, apiName)] = fmt.Sprintf(`"error": "%[1]s len must be >= %[2]s",`, fieldName, paramMins[1])
 							} else {
 								fmt.Fprintln(out, fmt.Sprintf(`if %[1]sParam < %[2]s {
 									w.WriteHeader(http.StatusBadRequest)
 									w.Write(min%[1]sResponse%[3]s)
 									return
 								}`, fieldName, paramMins[1], apiName))
-								// todo внести данные в словарь для формирования респонсов
+								responseNamesRelatedError[fmt.Sprintf(`min%[1]sResponse%[2]s`, fieldName, apiName)] = fmt.Sprintf(`"error": "%[1]s must be >= %[2]s",`, fieldName, paramMins[1])
 							}
 						}
 						paramMaxs := reParamMax.FindStringSubmatch(structField.Tag.Value)
@@ -180,14 +193,14 @@ func main() {
 									w.Write(max%[1]sResponse%[3]s)
 									return
 								}`, fieldName, paramMaxs[1], apiName))
-								// todo внести данные в словарь для формирования респонсов
+								responseNamesRelatedError[fmt.Sprintf(`max%[1]sResponse%[2]s`, fieldName, apiName)] = fmt.Sprintf(`"error": "%[1]s len must be <= %[2]s",`, fieldName, paramMaxs[1])
 							} else {
 								fmt.Fprintln(out, fmt.Sprintf(`if %[1]sParam > %[2]s {
 									w.WriteHeader(http.StatusBadRequest)
 									w.Write(max%[1]sResponse%[3]s)
 									return
 								}`, fieldName, paramMaxs[1], apiName))
-								// todo внести данные в словарь для формирования респонсов
+								responseNamesRelatedError[fmt.Sprintf(`max%[1]sResponse%[2]s`, fieldName, apiName)] = fmt.Sprintf(`"error": "%[1]s must be <= %[2]s",`, fieldName, paramMaxs[1])
 							}
 						}
 						paramEnums := reEnum.FindStringSubmatch(structField.Tag.Value)
@@ -197,7 +210,9 @@ func main() {
 									w.Write(%[2]sStatusResponse%[3]s)
 									return
 							}`, strings.Split(paramEnums[1], "|"), fieldName, apiName))
-							// todo внести данные в словарь для формирования респонсов
+							semiformat := fmt.Sprintf("%v", strings.Split(paramEnums[1], "|"))
+							tokens := strings.Split(semiformat, " ")
+							responseNamesRelatedError[fmt.Sprintf(`%[1]sStatusResponse%[2]s`, fieldName, apiName)] = fmt.Sprintf(`"error": "%[1]s must be one of %[2]s",`, fieldName, strings.Join(tokens, ", "))
 						}
 					}
 					fmt.Fprintln(out, `ctx := r.Context()`)
@@ -206,7 +221,7 @@ func main() {
 						fmt.Fprintln(out, fmt.Sprintf(`%[1]s: %[2]s,`, key, element))
 					}
 					fmt.Fprintln(out, `}`)
-					fmt.Fprintln(out, `newObj, err := srv.Create(ctx, params)
+					fmt.Fprintln(out, fmt.Sprintf(`newObj, err := srv.%s(ctx, params)
 					if err != nil {
 						if reflect.TypeOf(err).String() != "main.ApiError" {
 							w.WriteHeader(http.StatusInternalServerError)
@@ -229,11 +244,28 @@ func main() {
 						})
 						w.WriteHeader(http.StatusOK)
 						w.Write(newObjJson)
-					}`)
+					}`, funcDecl.Name.Name))
 					fmt.Fprintln(out, `}`)
 
 				}
 			}
 		}
+	}
+	for keyResponseName, valueResponseBody := range responseNamesRelatedError {
+		fmt.Fprintln(out, fmt.Sprintf(`var %[1]s, _ = json.Marshal(map[string]string{
+			%[2]s
+		})`, keyResponseName, valueResponseBody))
+	}
+	for keyApiName, valueCases := range serveHTTPObjects {
+		fmt.Fprintln(out, fmt.Sprintf(`func (srv *%s) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {`, keyApiName))
+		for _, oneCase := range valueCases {
+			fmt.Fprintln(out, fmt.Sprintf(`case "%[1]s":
+						srv.%[2]s(w, r)`, oneCase.Url, oneCase.Handler))
+		}
+		fmt.Fprintln(out, `default:
+			w.WriteHeader(http.StatusNotFound)
+			w.Write(unknownMethodResponse)
+		}}`)
 	}
 }
