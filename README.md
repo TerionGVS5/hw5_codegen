@@ -84,9 +84,3 @@ Directory structure:
 * api.go - you need to feed this file to the code generator. no need to edit it
 * main.go - everything is clear here. no need to edit
 * main_test.go - this file should be run for testing after code generation. no need to edit
-
-The tests will run like this:
-``` shell
-# being in this folder
-# .exe extension only for lucky windows owners
-# collect 
